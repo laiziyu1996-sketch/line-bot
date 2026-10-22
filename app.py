@@ -1,4 +1,4 @@
-"""LINE shared expense bot V4.2: trigger-only, flexible bill parsing."""
+"""LINE shared expense bot V4.3: flexible trigger and bill parsing."""
 import logging
 import os
 import re
@@ -17,11 +17,22 @@ SECRET = os.getenv('LINE_CHANNEL_SECRET', '')
 TOKEN = os.getenv('LINE_CHANNEL_ACCESS_TOKEN', '')
 handler = WebhookHandler(SECRET) if SECRET else None
 configuration = Configuration(access_token=TOKEN) if TOKEN else None
-CATEGORIES = ('電費', '水費', '瓦斯費', '管理費', '網路費', '清潔費', '房租', '其他費用')
+CATEGORY_ALIASES = (
+    ('瓦斯費', ('瓦斯', '天然氣', '煤氣', '燃氣')),
+    ('電費', ('電費', '電帳單', '電力費')),
+    ('水費', ('水費', '水帳單')),
+    ('管理費', ('管理費', '大樓管理', '社區管理')),
+    ('網路費', ('網路費', '寬頻費')),
+    ('清潔費', ('清潔費', '清潔支出')),
+    ('房租', ('房租', '租金')),
+    ('其他費用', ('其他費用', '雜費')),
+)
 # Match the amount label and then accept punctuation, whitespace, currency symbols, and comma-separated digits.
-AMOUNT_RE = re.compile(r'(?:應\s*繳\s*(?:總\s*)?金\s*額|帳\s*單\s*(?:總\s*)?金\s*額|應\s*繳\s*費\s*用|總\s*費\s*用|費\s*用\s*總\s*額|總\s*金\s*額|應\s*繳|金\s*額)\s*[:=：]?\s*(?:NTD|NT\$|TWD|\$)?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*(?:元|塊)?', re.I)
+AMOUNT_RE = re.compile(r'(?:應\s*繳\s*(?:總\s*)?(?:金\s*額|全\s*額|費\s*用)?|帳\s*單\s*(?:總\s*)?金\s*額|總\s*費\s*用|費\s*用\s*總\s*額|總\s*金\s*額|合\s*計|金\s*額)\s*[:=：為是]?\s*(?:NTD|NT\$|TWD|\$)?\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s*(?:元|塊)?', re.I)
+# Allow category + total in one line, e.g.「瓦斯費317元」, but not arbitrary unlabelled numbers.
+CATEGORY_AMOUNT_RE = re.compile(r'(?:瓦斯|天然氣|電費|水費|管理費|網路費|清潔費|房租|租金)\s*(?:總共|共|為|:|：)?\s*(?:NT\$|\$)?\s*([0-9][0-9,]*)\s*元')
 # Require explicit '天' to avoid treating bill amount as a person's days.
-PERSON_RE = re.compile(r'(?<![\w])([^\s,:;。\d\-]{1,12})\s*[:：]\s*(\d+(?:\.\d+)?)\s*天')
+PERSON_RE = re.compile(r'([^\s,:;。\d\-、，]{1,12})\s*[:：]\s*(\d+(?:\.\d+)?)\s*天')
 PERIOD_RE = re.compile(r'共\s*(\d+)\s*天')
 
 
@@ -50,10 +61,10 @@ def parse_message(raw):
     text = normalized[len('計算費用'):].strip()
     if not text:
         return '請在「計算費用」後貼上費用類型、應繳金額及每人的在家天數。'
-    category = next((c for c in CATEGORIES if c in text), None)
+    category = next((canonical for canonical, aliases in CATEGORY_ALIASES if any(a in text for a in aliases)), None)
     if not category:
         return '請提供費用類型，例如：電費、水費或瓦斯費。'
-    amount_match = AMOUNT_RE.search(text)
+    amount_match = AMOUNT_RE.search(text) or CATEGORY_AMOUNT_RE.search(text)
     if not amount_match:
         return '無法辨識應繳金額，請確認包含「應繳金額：4866元」或「應繳金額：4,866元」。'
     try:
@@ -92,7 +103,7 @@ def parse_message(raw):
 
 @app.get('/')
 def home():
-    return 'LINE expense bot V4.2 running', 200
+    return 'LINE expense bot V4.3 running', 200
 
 
 @app.post('/callback')
